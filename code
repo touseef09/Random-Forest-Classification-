@@ -1,0 +1,291 @@
+// Define a Point object.
+var point = ee.Geometry.Point(73.002212, 33.680239);
+ 
+// Apply the buffer method to the Point object.
+var pointBuffer = point.buffer({'distance': 5000});
+
+var pointBuffer2 = point.buffer({'distance': 14700});
+ 
+// Print the result to the console.
+print('point.buffer(...) =', pointBuffer);
+
+Map.addLayer(point,
+             {'color': 'black'},
+             'Geometry [black]: point');
+Map.addLayer(pointBuffer,
+             {'color': 'red'},
+             'Result [red]: point.buffer');
+Map.addLayer(pointBuffer2,
+             {'color': 'blue'},
+             'Result [blue]: point.buffer');
+Map.centerObject(point);
+
+
+Map.centerObject(studyarea,11);
+
+
+
+var SFCCvis = {bands: ['B8', 'B4', 'B3'], max: 3000};
+
+
+
+////////Sentinel-2 Data 2020////////
+
+var S2020 = ee.ImageCollection('COPERNICUS/S2').filterDate('2020-05-25', '2020-08-12')
+
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+
+                 .filterBounds(studyarea);
+
+print(S2020, 'S2 Data 2020');
+
+
+
+var listS2020dataset=S2020.toList(S2020.size());
+
+print(listS2020dataset, 'Data list_2020');
+
+
+
+var img1 = ee.Image(listS2020dataset.get(1)).clip(studyarea);
+
+Map.addLayer(img1, SFCCvis, 'SFCC Image1');
+
+// Cloudfree scenes: 1,5,7
+var imgcollection=ee.ImageCollection([ee.Image(listS2020dataset.get(1)),
+ee.Image(listS2020dataset.get(5)),ee.Image(listS2020dataset.get(7))])
+.select(['B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12']);
+
+print(imgcollection, 'imgcollection');
+
+
+
+////Image stacking
+
+var stackCollection = function(imgcollection) {
+
+  var first = ee.Image(imgcollection.first()).select([]);
+
+ var appendBands = function(image, previous) {
+
+ return ee.Image(previous).addBands(image)};
+
+ return ee.Image(imgcollection.iterate(appendBands, first));};
+
+var image_stack = stackCollection(imgcollection);
+
+print(image_stack, 'Image Stack');
+
+
+////// Image Classification
+
+// Class Merging
+
+var polygons=Forest.merge(Cropland).merge(Urban_Park).merge(Human_Settlement).merge(Road).merge(Water);
+
+print(polygons, 'Training data');
+
+
+var sample = polygons.randomColumn();
+
+var trainingsample = sample.filter('random <= 0.75');
+
+var validationsample = sample.filter('random > 0.75');
+
+print(trainingsample, 'Training sample');
+
+print(validationsample, 'Validation sample');
+
+
+var training = image_stack.sampleRegions({collection: trainingsample, properties: ['Class'],scale: 20});
+
+print(training, 'Training data Band values');
+
+
+var validation = image_stack.sampleRegions({ collection: validationsample,  properties: ['Class'],scale: 20});
+
+
+//RF Classifier Model Building
+
+// ee.Classifier.smileRandomForest(numberOfTrees, variablesPerSplit, minLeafPopulation, bagFraction, maxNodes, seed);
+
+var RFclassifier = ee.Classifier.smileRandomForest(300).train(training, 'Class');
+
+var Classified = image_stack.classify(RFclassifier).clip(studyarea);
+
+print(Classified, 'Classified');
+
+
+var Palette = [
+
+  'green', //Forest
+
+  'yellow', //Cropland 
+
+  'grey', //Urban_Park
+  
+  'purple', //Human_Settlement
+
+  'black', //Road
+
+  'blue', //Waterbody
+
+];
+
+Map.addLayer(Classified, {palette: Palette, min: 1, max: 5}, 'Classified map');
+
+
+
+//// Accuracy Assessment
+
+// Get a confusion matrix and overall accuracy for the training sample.
+
+var trainAccuracy = RFclassifier.confusionMatrix();
+
+print('Training error matrix', trainAccuracy);
+
+print('Training overall accuracy', trainAccuracy.accuracy());
+
+
+
+// Get a confusion matrix and overall accuracy for the validation sample.
+
+validation = validation.classify(RFclassifier);
+
+var validationAccuracy = validation.errorMatrix('Class', 'classification');
+
+print('Validation error matrix', validationAccuracy);
+
+print('Validation accuracy', validationAccuracy.accuracy());
+
+
+///// Variable Importance
+
+var explain = RFclassifier.explain();
+
+print(explain, 'Explain');
+
+
+
+//Variable Importance of RF Classifier
+
+var variable_importance = ee.Feature(null, ee.Dictionary(explain).get('importance'));
+
+
+// Chart of Variable Importance of RF Classifier
+
+// var chartTitle = 'Random Forest: Bands Variable Importance';
+
+// var chart =ui.Chart.feature.byProperty(variable_importance).setChartType('BarChart').setOptions({title: chartTitle,legend: {position: 'none'},hAxis: {title: 'Importance'},vAxis: {title: 'Bands'}});
+
+// Chart: Location and Plot
+
+// chart.style().set({ position: 'bottom-left',width: '400px',height: '400px'});
+
+// Map.add(chart);
+
+var areaImage = ee.Image.pixelArea().divide(1e6).addBands(Classified);
+
+// Calculate Area by Class
+// Using a Grouped Reducer
+var areas = areaImage.reduceRegion({
+      reducer: ee.Reducer.sum().group({
+      groupField: 1,
+      groupName: 'classification2022',
+    }),
+    geometry: studyarea,
+    scale: 100,
+    tileScale: 4,
+    maxPixels: 3e10
+    });
+
+var classAreas = ee.List(areas.get('groups'));
+print(classAreas, "Area (sq.km) of classes");
+
+
+// ********* add legend ****************
+
+// Set position of panel
+
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-right',
+    padding: '1000pi x 15px'
+  }
+});
+
+// Create legend title
+
+var legendTitle = ui.Label({
+  value: 'Classification legend',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+  }
+});
+
+// Add the title to the panel
+
+legend.add(legendTitle);
+
+// Create and Style 1 row of the legend.
+
+var makeRow = function(color, name) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: '#' + color,
+      padding: '8px',
+      margin: '0, 0, 4px 0'
+    }
+  });
+ 
+  var description = ui.Label({
+    value: name,
+    style: {margin: '0 0 4px 6pix'}
+  });
+ 
+  return ui.Panel({
+    widgets: [colorBox, description],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+};
+
+// Identify palette with the legend colors
+
+var palette = ['4d7f17', 'FFFF00', '808080', '800080', '000000', '0000FF'];
+
+// Identify names within the legend
+
+var names = ['Forest', 'Cropland', 'Urban_park', 'Human_Settlement', 'Road', 'Waterbody'];
+           
+// Add color and names
+
+for (var i = 0; i < 6; i++) {
+  legend.add(makeRow(palette[i], names[i]));
+  }
+
+// Add legend to map
+
+Map.add(legend);
+
+
+
+////// Export
+
+// Export.image.toDrive({
+
+//  image: Classified,
+
+// description: 'RF_Classified_map',
+
+ // region: studyarea,
+
+ // scale: 20,
+
+ // fileFormat: 'GeoTIFF',
+
+//  maxPixels: 1e9,
+// });
+
