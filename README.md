@@ -1,2 +1,3 @@
 # Random-Forest-Classification-
-Random Forest Classification 
+
+The Random Forest classifier is one of the most easily understood machine learning algorithm because of its basis in simpler methods. The simple construction and modification of scripts combined with easy access to open source data via the Earth Engine search bar makes this program especially useful in this geoprocessing application. The script from this tutorial can be used with different data or can be expanded upon to run the classification methods with a set of new parameters. Ultimately, the application of Random Forest classification to habitat suitability/biodiversity modeling offers abundant opportunity to explore predictions of species distribution through the lens of bioclimatic factors.
